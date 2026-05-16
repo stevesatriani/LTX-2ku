@@ -23,7 +23,8 @@ def gpu_model(model: _M) -> Iterator[_M]:
     try:
         yield model
     finally:
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         # .to("meta") releases storage for all parameters/buffers regardless
         # of their original device (CUDA or CPU).
         model.to("meta")

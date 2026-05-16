@@ -700,12 +700,6 @@ def build_ui() -> gr.Blocks:
     """Build and return the complete Gradio Blocks application."""
     with gr.Blocks(
         title="LTX-2 Video Generation",
-        theme=gr.themes.Soft(
-            primary_hue=gr.themes.colors.indigo,
-            secondary_hue=gr.themes.colors.purple,
-            radius_size=gr.themes.sizes.radius_lg,
-        ),
-        css=CUSTOM_CSS,
     ) as demo:
 
         gr.HTML("""
@@ -1211,8 +1205,18 @@ def main():
     demo = build_ui()
     if not args.no_queue:
         demo.queue(max_size=5)
-    demo.launch(server_name=args.host, server_port=args.port,
-                share=args.share, show_error=True)
+    demo.launch(
+        server_name=args.host,
+        server_port=args.port,
+        share=args.share,
+        show_error=True,
+        theme=gr.themes.Soft(
+            primary_hue=gr.themes.colors.indigo,
+            secondary_hue=gr.themes.colors.purple,
+            radius_size=gr.themes.sizes.radius_lg,
+        ),
+        css=CUSTOM_CSS,
+    )
 
 
 if __name__ == "__main__":

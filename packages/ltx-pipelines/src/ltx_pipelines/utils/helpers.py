@@ -35,8 +35,9 @@ def get_device() -> torch.device:
 
 def cleanup_memory() -> None:
     gc.collect()
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
     try:
         if hasattr(torch._C, "_host_emptyCache"):
             torch._C._host_emptyCache()

@@ -20,6 +20,15 @@ checkpoints/
 tmp
 .wandb
 
+# Generated outputs
+outputs/
+
+# Downloaded model weights (large files, not tracked)
+models/
+
+# Malformed pip install artifacts
+=*
+
 # Model checkpoints
 *.ckpt
 *.pt

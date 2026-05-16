@@ -100,26 +100,56 @@ def _create_feature_extractor(transformer_config: dict) -> torch.nn.Module:
 
 # --- Split SDOps: Gemma LLM keys vs Embeddings Processor keys ---
 
-GEMMA_LLM_KEY_OPS = (
-    SDOps("GEMMA_LLM_KEY_OPS")
-    # 1. Map language model layers (note the double .model prefix)
-    .with_matching(prefix="language_model.model.")
-    .with_replacement("language_model.model.", "model.model.language_model.")
-    # 2. Map the Vision Tower
-    .with_matching(prefix="vision_tower.")
-    .with_replacement("vision_tower.", "model.model.vision_tower.")
-    # 3. Map the Multi-Modal Projector
-    .with_matching(prefix="multi_modal_projector.")
-    .with_replacement("multi_modal_projector.", "model.model.multi_modal_projector.")
-    # 4. Duplicate embed_tokens to lm_head (needed for prompt enhancement via generate())
-    .with_kv_operation(
-        operation=lambda key, value: [
-            KeyValueOperationResult(key, value),
-            KeyValueOperationResult("model.lm_head.weight", value),
-        ],
-        key_prefix="model.model.language_model.embed_tokens.weight",
+def _build_gemma_llm_key_ops() -> SDOps:
+    # Detect whether the installed transformers wraps the vision encoder under
+    # a .vision_model attribute (transformers<4.52) or exposes it directly
+    # (transformers>=4.52).  Checkpoint keys always have the vision_model. segment,
+    # so when the model no longer has that intermediate level we strip it via a
+    # kv_operation applied after the prefix-based rename.
+    with torch.device("meta"):
+        _probe = Gemma3ForConditionalGeneration(Gemma3Config.from_dict(GEMMA3_CONFIG_FOR_LTX.to_dict()))
+    _vt_has_wrapper = hasattr(_probe.model.vision_tower, "vision_model")
+    del _probe
+
+    ops = (
+        SDOps("GEMMA_LLM_KEY_OPS")
+        # 1. Map language model layers (note the double .model prefix)
+        .with_matching(prefix="language_model.model.")
+        .with_replacement("language_model.model.", "model.model.language_model.")
+        # 2. Map the Vision Tower
+        .with_matching(prefix="vision_tower.")
+        .with_replacement("vision_tower.", "model.model.vision_tower.")
+        # 3. Map the Multi-Modal Projector
+        .with_matching(prefix="multi_modal_projector.")
+        .with_replacement("multi_modal_projector.", "model.model.multi_modal_projector.")
+        # 4. Duplicate embed_tokens to lm_head (needed for prompt enhancement via generate())
+        .with_kv_operation(
+            operation=lambda key, value: [
+                KeyValueOperationResult(key, value),
+                KeyValueOperationResult("model.lm_head.weight", value),
+            ],
+            key_prefix="model.model.language_model.embed_tokens.weight",
+        )
     )
-)
+
+    if not _vt_has_wrapper:
+        # transformers>=4.52: checkpoint vision_tower.vision_model.* keys become
+        # model.model.vision_tower.vision_model.* after the prefix rename above,
+        # but the model no longer has the vision_model layer — strip it here.
+        ops = ops.with_kv_operation(
+            operation=lambda key, value: [
+                KeyValueOperationResult(
+                    key.replace("model.model.vision_tower.vision_model.", "model.model.vision_tower.", 1),
+                    value,
+                )
+            ],
+            key_prefix="model.model.vision_tower.vision_model.",
+        )
+
+    return ops
+
+
+GEMMA_LLM_KEY_OPS = _build_gemma_llm_key_ops()
 
 EMBEDDINGS_PROCESSOR_KEY_OPS = (
     SDOps("EMBEDDINGS_PROCESSOR_KEY_OPS")
@@ -200,8 +230,17 @@ def create_and_populate(module: GemmaTextEncoder) -> GemmaTextEncoder:
     v_model.embeddings.register_buffer("position_ids", position_ids)
     embed_scale = torch.tensor(model.config.text_config.hidden_size**0.5, device="cpu")
     l_model.embed_tokens.register_buffer("embed_scale", embed_scale)
-    l_model.rotary_emb_local.register_buffer("inv_freq", local_rope_freqs)
-    l_model.rotary_emb.register_buffer("inv_freq", inv_freqs)
+    if hasattr(l_model, "rotary_emb_local"):
+        # transformers < 4.52: separate rotary_emb_local and rotary_emb
+        l_model.rotary_emb_local.register_buffer("inv_freq", local_rope_freqs)
+        l_model.rotary_emb.register_buffer("inv_freq", inv_freqs)
+    else:
+        # transformers >= 4.52: unified rotary_emb with per-attention-type buffers.
+        # original_inv_freq mirrors inv_freq before any dynamic scaling.
+        l_model.rotary_emb.register_buffer("sliding_attention_inv_freq", local_rope_freqs)
+        l_model.rotary_emb.register_buffer("sliding_attention_original_inv_freq", local_rope_freqs)
+        l_model.rotary_emb.register_buffer("full_attention_inv_freq", inv_freqs)
+        l_model.rotary_emb.register_buffer("full_attention_original_inv_freq", inv_freqs)
 
     return module
 
