@@ -177,9 +177,23 @@ def create_and_populate(module: GemmaTextEncoder) -> GemmaTextEncoder:
 
     local_rope_freqs = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64).to(dtype=torch.float) / dim))
 
-    rope_scaling = getattr(config, "rope_scaling", {})
-    rope_type = rope_scaling.get("rope_type") if isinstance(rope_scaling, dict) else getattr(rope_scaling, "rope_type", "linear")
-    inv_freqs, _ = ROPE_INIT_FUNCTIONS[rope_type](config)
+    # Compute global RoPE inv_freqs. Prefer ROPE_INIT_FUNCTIONS when rope_type
+    # is resolvable; fall back to direct computation from rope_theta (standard
+    # RoPE, equivalent to the "default"/"linear" init) for transformers versions
+    # that store rope_scaling differently.
+    rope_theta = getattr(config, "rope_theta", 1_000_000)
+    rope_scaling = getattr(config, "rope_scaling", None)
+    if isinstance(rope_scaling, dict):
+        rope_type = rope_scaling.get("rope_type") or rope_scaling.get("type")
+    elif rope_scaling is not None:
+        rope_type = getattr(rope_scaling, "rope_type", None) or getattr(rope_scaling, "type", None)
+    else:
+        rope_type = None
+
+    if rope_type and rope_type in ROPE_INIT_FUNCTIONS:
+        inv_freqs, _ = ROPE_INIT_FUNCTIONS[rope_type](config)
+    else:
+        inv_freqs = 1.0 / (rope_theta ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
 
     positions_length = len(v_model.embeddings.position_ids[0])
     position_ids = torch.arange(positions_length, dtype=torch.long, device="cpu").unsqueeze(0)
