@@ -13,6 +13,14 @@
 
 set -e
 
+# ── Resolve python binary (python3 on most Linux systems) ─────────────────────
+PYTHON=$(command -v python3 || command -v python)
+if [[ -z "$PYTHON" ]]; then
+    echo "ERROR: no python3 or python found in PATH" >&2
+    exit 1
+fi
+PIP="$PYTHON -m pip"
+
 # ── Parse --download flag ─────────────────────────────────────────────────────
 MODE="app"
 EXTRA_ARGS=()
@@ -28,20 +36,46 @@ done
 if [ -d ".venv" ]; then
     echo "→ Activating .venv"
     source .venv/bin/activate
+    PYTHON=python
+    PIP="python -m pip"
 fi
 
 # ── 2. Verify packages ────────────────────────────────────────────────────────
-python -c "import gradio" 2>/dev/null || {
+# uv is required as the build backend for ltx-core and ltx-pipelines
+command -v uv >/dev/null 2>&1 || {
+    echo "→ Installing uv (build tool)..."
+    $PIP install uv --quiet
+    # Make sure uv binary is on PATH (pip may install to ~/.local/bin)
+    export PATH="$HOME/.local/bin:$PATH"
+}
+
+$PYTHON -c "import gradio" 2>/dev/null || {
     echo "→ Installing gradio..."
-    pip install gradio>=4.0
+    $PIP install "gradio>=4.0"
 }
 
 if [[ "$MODE" == "app" ]]; then
-    python -c "import ltx_pipelines" 2>/dev/null || {
-        echo "→ Installing ltx packages..."
-        pip install -e packages/ltx-core packages/ltx-pipelines
-    }
+    # Verify the local editable install is active by checking location of blocks.py.
+    # If it resolves to /usr/local/lib (old system install), force a reinstall.
+    _blocks_path=$($PYTHON -c "import ltx_pipelines.utils.blocks as b; import inspect; print(inspect.getfile(b))" 2>/dev/null || echo "")
+    _needs_install=0
+    if [[ -z "$_blocks_path" ]]; then
+        _needs_install=1
+    elif [[ "$_blocks_path" != *"packages/ltx-pipelines"* ]] && [[ "$_blocks_path" != *"LTX-2"* ]]; then
+        echo "→ System ltx_pipelines detected at: $_blocks_path"
+        _needs_install=1
+    fi
+    if [[ "$_needs_install" == "1" ]]; then
+        echo "→ Installing/reinstalling ltx packages from local source..."
+        $PIP install "uv_build>=0.9.8,<0.10.0" --quiet
+        $PIP install --force-reinstall --no-build-isolation -e packages/ltx-core packages/ltx-pipelines
+    fi
 fi
+
+$PYTHON -c "from huggingface_hub import hf_hub_download" 2>/dev/null || {
+    echo "→ Installing/upgrading huggingface_hub..."
+    $PIP install "huggingface_hub>=0.20"
+}
 
 # ── 3. Set model paths (edit these or use env vars) ───────────────────────────
 # Uncomment and set your actual paths:
@@ -64,9 +98,9 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 if [[ "$MODE" == "download" ]]; then
     echo "  LTX-2 Model Downloader  (port 7861)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    python download_models.py "${EXTRA_ARGS[@]}"
+    $PYTHON download_models.py "${EXTRA_ARGS[@]}"
 else
     echo "  LTX-2 Web UI  (port 7860)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    python app.py "${EXTRA_ARGS[@]}"
+    $PYTHON app.py "${EXTRA_ARGS[@]}"
 fi

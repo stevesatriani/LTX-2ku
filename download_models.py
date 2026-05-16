@@ -400,30 +400,32 @@ def download_models(base_dir: str, hf_token: str, *checkbox_lists):
             yield "".join(lines)
             continue
 
-        # Build huggingface-cli download command
+        # Build download command using the Python API inline script.
+        # This avoids depending on huggingface_hub.commands (not present in older
+        # versions) while still streaming real-time tqdm output via subprocess.
+        token_repr = repr(hf_token.strip() if hf_token and hf_token.strip() else None)
+
         if not m["is_repo"]:
-            # Single file: download into the subdir directly
-            cmd = [
-                sys.executable, "-m", "huggingface_hub.commands.huggingface_cli",
-                "download",
-                m["repo"],
-                m["file"],
-                "--local-dir", str(dest_dir),
-            ]
+            script = (
+                "import sys; from huggingface_hub import hf_hub_download; "
+                f"p = hf_hub_download("
+                f"repo_id={repr(m['repo'])}, filename={repr(m['file'])}, "
+                f"local_dir={repr(str(dest_dir))}, token={token_repr}, resume_download=True); "
+                "print('Saved to:', p)"
+            )
         else:
-            # Full repo: download into <subdir>/<repo_name>/
             repo_name = m["repo"].split("/")[-1]
-            cmd = [
-                sys.executable, "-m", "huggingface_hub.commands.huggingface_cli",
-                "download",
-                m["repo"],
-                "--local-dir", str(dest_dir / repo_name),
-            ]
+            script = (
+                "import sys; from huggingface_hub import snapshot_download; "
+                f"p = snapshot_download("
+                f"repo_id={repr(m['repo'])}, "
+                f"local_dir={repr(str(dest_dir / repo_name))}, token={token_repr}); "
+                "print('Saved to:', p)"
+            )
 
-        if hf_token and hf_token.strip():
-            cmd += ["--token", hf_token.strip()]
+        cmd = [sys.executable, "-c", script]
 
-        emit(f"\n        $ huggingface-cli download {m['repo']} ...\n")
+        emit(f"\n        $ python -c \"huggingface_hub ... {m['repo']}\"\n")
         yield "".join(lines)
 
         proc = subprocess.Popen(
@@ -732,6 +734,40 @@ bash launch.sh
 
         # Update env var block when directory changes
         base_dir.change(_update_env, inputs=base_dir, outputs=env_md)
+
+        # Persist token + base_dir in localStorage so they survive page refresh.
+        # demo.load fires JS first, restores values, then .then() updates env_md.
+        demo.load(
+            fn=None,
+            js="""
+            () => {
+                const tok = localStorage.getItem('ltx2_hf_token') || '';
+                const dir = localStorage.getItem('ltx2_base_dir') || '';
+                return [tok, dir];
+            }
+            """,
+            outputs=[hf_token, base_dir],
+        ).then(
+            fn=_update_env,
+            inputs=base_dir,
+            outputs=env_md,
+        )
+
+        # Save token to localStorage whenever it changes
+        hf_token.change(
+            fn=None,
+            js="(v) => { localStorage.setItem('ltx2_hf_token', v); return v; }",
+            inputs=hf_token,
+            outputs=hf_token,
+        )
+        # Save base_dir to localStorage whenever it changes (separate listener
+        # from the _update_env listener already wired above)
+        base_dir.change(
+            fn=None,
+            js="(v) => { localStorage.setItem('ltx2_base_dir', v); return v; }",
+            inputs=base_dir,
+            outputs=base_dir,
+        )
 
         dl_btn.click(
             download_models,

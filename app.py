@@ -42,12 +42,40 @@ OUTPUT_DIR = Path(os.environ.get("LTX_OUTPUT_DIR", "./outputs"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─── Default paths from environment ──────────────────────────────────────────
+# Priority: env var → ./models/ auto-detect → empty
+def _find(env_key: str, *candidates: str) -> str:
+    """Return env var if set, else first candidate path that exists on disk."""
+    val = os.environ.get(env_key, "").strip()
+    if val:
+        return val
+    for c in candidates:
+        if Path(c).exists():
+            return c
+    return ""
+
+_M = "./models"  # default models dir (created by download_models.py)
+
 ENV = {
-    "checkpoint": os.environ.get("LTX_CHECKPOINT_PATH", ""),
-    "distilled_ckpt": os.environ.get("LTX_DISTILLED_CHECKPOINT", ""),
-    "gemma": os.environ.get("LTX_GEMMA_ROOT", ""),
-    "upsampler": os.environ.get("LTX_UPSAMPLER_PATH", ""),
-    "distilled_lora": os.environ.get("LTX_DISTILLED_LORA_PATH", ""),
+    "checkpoint": _find(
+        "LTX_CHECKPOINT_PATH",
+        f"{_M}/checkpoints/ltx-2.3-22b-dev.safetensors",
+    ),
+    "distilled_ckpt": _find(
+        "LTX_DISTILLED_CHECKPOINT",
+        f"{_M}/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors",
+    ),
+    "gemma": _find(
+        "LTX_GEMMA_ROOT",
+        f"{_M}/text_encoder/gemma-3-12b-it-qat-q4_0-unquantized",
+    ),
+    "upsampler": _find(
+        "LTX_UPSAMPLER_PATH",
+        f"{_M}/components/ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+    ),
+    "distilled_lora": _find(
+        "LTX_DISTILLED_LORA_PATH",
+        f"{_M}/components/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+    ),
 }
 
 DEFAULT_NEGATIVE_PROMPT = (
@@ -131,11 +159,18 @@ def _out(prefix: str = "video") -> str:
 
 
 def _ok(path: str, label: str = "Path") -> tuple[bool, str]:
-    """Validate that a path is provided and exists."""
+    """Validate that a path is provided and exists on disk."""
     if not path or not path.strip():
-        return False, f"⚠️  {label} is empty."
+        return False, (
+            f"⚠️  {label} is empty.\n\n"
+            "Fill in the model path in the '⚙️ Model Paths' section above,\n"
+            "or download models first with:  bash launch.sh --download"
+        )
     if not Path(path.strip()).exists():
-        return False, f"⚠️  {label} not found:\n  {path.strip()}"
+        return False, (
+            f"⚠️  {label} not found:\n  {path.strip()}\n\n"
+            "Check that the file exists or download it with:  bash launch.sh --download"
+        )
     return True, "ok"
 
 
