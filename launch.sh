@@ -68,7 +68,7 @@ if [[ "$MODE" == "app" ]]; then
     if [[ "$_needs_install" == "1" ]]; then
         echo "→ Installing/reinstalling ltx packages from local source..."
         $PIP install "uv_build>=0.9.8,<0.10.0" --quiet
-        $PIP install --force-reinstall --no-build-isolation -e packages/ltx-core packages/ltx-pipelines
+        $PIP install --force-reinstall --no-build-isolation -e packages/ltx-core -e packages/ltx-pipelines
     fi
 fi
 
