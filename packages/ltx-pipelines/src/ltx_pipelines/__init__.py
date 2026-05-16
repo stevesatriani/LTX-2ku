@@ -12,14 +12,9 @@ For more detailed components and utilities, import from specific submodules
 like `ltx_pipelines.utils.media_io` or `ltx_pipelines.utils.constants`.
 """
 
-from ltx_pipelines.a2vid_two_stage import A2VidPipelineTwoStage
-from ltx_pipelines.distilled import DistilledPipeline
-from ltx_pipelines.ic_lora import ICLoraPipeline
-from ltx_pipelines.keyframe_interpolation import KeyframeInterpolationPipeline
-from ltx_pipelines.lipdub import LipDubPipeline
-from ltx_pipelines.retake import RetakePipeline
-from ltx_pipelines.ti2vid_one_stage import TI2VidOneStagePipeline
-from ltx_pipelines.ti2vid_two_stages import TI2VidTwoStagesPipeline
+from __future__ import annotations
+
+import importlib
 
 __all__ = [
     "A2VidPipelineTwoStage",
@@ -31,3 +26,22 @@ __all__ = [
     "TI2VidOneStagePipeline",
     "TI2VidTwoStagesPipeline",
 ]
+
+_LAZY: dict[str, tuple[str, str]] = {
+    "A2VidPipelineTwoStage":        ("ltx_pipelines.a2vid_two_stage",          "A2VidPipelineTwoStage"),
+    "DistilledPipeline":            ("ltx_pipelines.distilled",                "DistilledPipeline"),
+    "ICLoraPipeline":               ("ltx_pipelines.ic_lora",                  "ICLoraPipeline"),
+    "KeyframeInterpolationPipeline":("ltx_pipelines.keyframe_interpolation",   "KeyframeInterpolationPipeline"),
+    "LipDubPipeline":               ("ltx_pipelines.lipdub",                   "LipDubPipeline"),
+    "RetakePipeline":               ("ltx_pipelines.retake",                   "RetakePipeline"),
+    "TI2VidOneStagePipeline":       ("ltx_pipelines.ti2vid_one_stage",         "TI2VidOneStagePipeline"),
+    "TI2VidTwoStagesPipeline":      ("ltx_pipelines.ti2vid_two_stages",        "TI2VidTwoStagesPipeline"),
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _LAZY:
+        module_path, attr = _LAZY[name]
+        module = importlib.import_module(module_path)
+        return getattr(module, attr)
+    raise AttributeError(f"module 'ltx_pipelines' has no attribute {name!r}")
