@@ -162,9 +162,24 @@ def create_and_populate(module: GemmaTextEncoder) -> GemmaTextEncoder:
 
     config = model.config.text_config
     dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
-    base = config.rope_local_base_freq
+
+    # rope_local_base_freq moved / renamed across transformers versions.
+    # Fall back: check rope_scaling dict, then use Gemma3 default of 10000.
+    base = getattr(config, "rope_local_base_freq", None)
+    if base is None:
+        rope_sc = getattr(config, "rope_scaling", None)
+        if isinstance(rope_sc, dict):
+            base = rope_sc.get("local_base_freq", rope_sc.get("local_freq", 10000))
+        elif rope_sc is not None:
+            base = getattr(rope_sc, "local_base_freq", getattr(rope_sc, "local_freq", 10000))
+        else:
+            base = 10000
+
     local_rope_freqs = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64).to(dtype=torch.float) / dim))
-    inv_freqs, _ = ROPE_INIT_FUNCTIONS[config.rope_scaling["rope_type"]](config)
+
+    rope_scaling = getattr(config, "rope_scaling", {})
+    rope_type = rope_scaling.get("rope_type") if isinstance(rope_scaling, dict) else getattr(rope_scaling, "rope_type", "linear")
+    inv_freqs, _ = ROPE_INIT_FUNCTIONS[rope_type](config)
 
     positions_length = len(v_model.embeddings.position_ids[0])
     position_ids = torch.arange(positions_length, dtype=torch.long, device="cpu").unsqueeze(0)
